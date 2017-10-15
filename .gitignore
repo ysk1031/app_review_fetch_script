@@ -100,3 +100,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+
+google_service_client_json/
