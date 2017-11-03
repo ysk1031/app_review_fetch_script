@@ -102,4 +102,4 @@ venv.bak/
 .mypy_cache/
 
 
-google_service_client_json/
+spreadsheet-editor.json

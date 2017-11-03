@@ -9,7 +9,7 @@ def get_sheet():
     scope = ['https://spreadsheets.google.com/feeds']
     doc_id = os.environ.get('DOC_ID')
     json_path = os.path.expanduser(
-        './google_service_client_json/' + os.environ.get('GOOGLE_SERVICE_CLIENT_JSON'))
+        os.environ.get('GOOGLE_SERVICE_CLIENT_JSON'))
 
     credentials = ServiceAccountCredentials.from_json_keyfile_name(
         json_path, scope)
@@ -33,57 +33,103 @@ def rating_stars(score):
         return ""
 
 
-def main():
+def insert_review_to_row(sheet, column, review_id, entry):
+    author_uri = entry['author']['uri']['label']
+    author_name = entry['author']['name']['label']
+
+    app_version = entry['im:version']['label']
+
+    rating = entry['im:rating']['label']
+    review_text = '「' + entry['title']['label'] + '」\n\n'
+    review_text += entry['content']['label']
+
+    sheet.insert_row([
+        review_id,
+        author_name + '\n' + author_uri,
+        rating_stars(int(rating)),
+        review_text,
+        app_version
+    ], column)
+
+
+def fetch_review_data(page, app_id):
+    res = requests.get(
+        'http://itunes.apple.com/jp/rss/customerreviews/page=' +
+        str(page) +
+        '/id=' +
+        app_id +
+        '/json')
+    return res.json()
+
+
+def insert_data_from_scratch(sheet, app_id):
+    sheet.insert_row([
+        'Review ID',
+        'Reviewer',
+        'Star',
+        'Review',
+        'Version'
+    ], 1)
+
+    page = 1
+    while True:
+        review_dict = fetch_review_data(page, app_id)
+        if review_dict['feed'].get('entry') is None:
+            break
+
+        for i, entry in enumerate(review_dict['feed']['entry']):
+            if i == 0:
+                continue
+
+            review_id = entry['id']['label']
+            column = i + 1 + (page - 1) * 50
+            insert_review_to_row(sheet, column, review_id, entry)
+
+        page += 1
+
+
+def insert_only_new_data(sheet, app_id):
+    page = 1
+    latest_review_id = sheet.acell('A2').input_value
+
+    while True:
+        review_dict = fetch_review_data(page, app_id)
+        if review_dict['feed'].get('entry') is None:
+            break
+
+        for i, entry in enumerate(review_dict['feed']['entry']):
+            if i == 0:
+                continue
+
+            review_id = entry['id']['label']
+            if review_id <= latest_review_id:
+                break
+
+            column = i + 1 + (page - 1) * 50
+            insert_review_to_row(sheet, column, review_id, entry)
+
+        page += 1
+
+
+def main(from_scratch):
     dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
     load_dotenv(dotenv_path)
 
-    app_id = os.environ.get('IOS_APP_ID')
-
     try:
         sheet = get_sheet()
-        sheet.update_acell('A1', 'Review ID')
-        sheet.update_acell('B1', 'Reviewer')
-        sheet.update_acell('C1', 'Star')
-        sheet.update_acell('D1', 'Review')
-        sheet.update_acell('E1', 'Version')
-
-        page = 1
-        while True:
-            res = requests.get(
-                'http://itunes.apple.com/jp/rss/customerreviews/page=' + str(page) + '/id=' + app_id + '/json')
-            review_dict = res.json()
-
-            if review_dict['feed'].get('entry') is None:
-                break
-
-            for i, entry in enumerate(review_dict['feed']['entry']):
-                if i == 0:
-                    continue
-
-                review_id = entry['id']['label']
-
-                author_uri = entry['author']['uri']['label']
-                author_name = entry['author']['name']['label']
-
-                app_version = entry['im:version']['label']
-
-                rating = entry['im:rating']['label']
-                review_text = '「' + entry['title']['label'] + '」\n\n'
-                review_text += entry['content']['label']
-
-                column_str = str(i + 1 + (page - 1) * 50)
-                sheet.update_acell('A' + column_str, review_id)
-                sheet.update_acell(
-                    'B' + column_str, author_name + '\n' + author_uri)
-                sheet.update_acell('C' + column_str, rating_stars(int(rating)))
-                sheet.update_acell('D' + column_str, review_text)
-                sheet.update_acell('E' + column_str, app_version)
-
-            page += 1
+        app_id = os.environ.get('IOS_APP_ID')
+        if from_scratch:
+            insert_data_from_scratch(sheet, app_id)
+        else:
+            insert_only_new_data(sheet, app_id)
     except Exception as e:
         print("Error occurred: " + str(e))
 
 
+def handler(event, context):
+    main(False)
+
+
 # 実行
 if __name__ == '__main__':
-    main()
+    main(False)
